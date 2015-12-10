@@ -36,6 +36,9 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.CaptureResult;
+import android.hardware.camera2.TotalCaptureResult;
+import android.hardware.camera2.params.MeteringRectangle;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.MediaRecorder;
 import android.os.Bundle;
@@ -53,6 +56,7 @@ import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
@@ -96,6 +100,11 @@ public class Camera2VideoFragment extends Fragment
     private Button mButtonVideo;
 
     /**
+     * Info Textview
+     */
+    private TextView mInfoText;
+
+    /**
      * A refernce to the opened {@link android.hardware.camera2.CameraDevice}.
      */
     private CameraDevice mCameraDevice;
@@ -132,6 +141,10 @@ public class Camera2VideoFragment extends Fragment
 
         @Override
         public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {
+            if (null != mCaptureResult) {
+                mInfoText.setText("1/" + 1000000000/mRequestedFrameDuration + " =?= 1/" + 1000000000/mCaptureResult.get(CaptureResult.SENSOR_FRAME_DURATION) + "\n"
+                + mRequestedFrameDuration + "\n" + mCaptureResult.get(CaptureResult.SENSOR_FRAME_DURATION));
+            }
         }
 
     };
@@ -146,10 +159,17 @@ public class Camera2VideoFragment extends Fragment
      */
     private Size mVideoSize;
 
+    long mRequestedFrameDuration;
+
     /**
      * Camera preview.
      */
     private CaptureRequest.Builder mPreviewBuilder;
+
+    /**
+     * Capture Result
+    */
+    private CaptureResult mCaptureResult = null;
 
     /**
      * MediaRecorder
@@ -276,6 +296,9 @@ public class Camera2VideoFragment extends Fragment
         mButtonVideo = (Button) view.findViewById(R.id.video);
         mButtonVideo.setOnClickListener(this);
         view.findViewById(R.id.info).setOnClickListener(this);
+
+        mInfoText = (TextView) view.findViewById(R.id.infotext);
+        mInfoText.setOnClickListener(this);
     }
 
     @Override
@@ -425,9 +448,23 @@ public class Camera2VideoFragment extends Fragment
             CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
             StreamConfigurationMap map = characteristics
                     .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-            mVideoSize = chooseVideoSize(map.getOutputSizes(MediaRecorder.class));
-            mPreviewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture.class),
-                    width, height, mVideoSize);
+
+            //mVideoSize = chooseVideoSize(map.getOutputSizes(MediaRecorder.class));
+            //mPreviewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture.class),
+            //        width, height, mVideoSize);
+
+            // Hardcode resolutions to 1280x720
+            mVideoSize = new Size(1280, 720);
+            mPreviewSize = mVideoSize;
+
+
+            Log.d(TAG, mVideoSize.toString() + "->" + mPreviewSize.toString() + "(" + width + "x" + height + ")");
+            Log.d(TAG, "MediaRecorder: getOutputMinFrameDuration = " + map.getOutputMinFrameDuration(MediaRecorder.class, mVideoSize) + " | map.getOutputStallDuration = " + map.getOutputStallDuration(MediaRecorder.class, mVideoSize));
+            Log.d(TAG, "SurfaceTexture: getOutputMinFrameDuration = " + map.getOutputMinFrameDuration(SurfaceTexture.class, mPreviewSize) + " | map.getOutputStallDuration = " + map.getOutputStallDuration(SurfaceTexture.class, mPreviewSize));
+
+
+
+
 
             int orientation = getResources().getConfiguration().orientation;
             if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
@@ -526,14 +563,42 @@ public class Camera2VideoFragment extends Fragment
             setUpCaptureRequestBuilder(mPreviewBuilder);
             HandlerThread thread = new HandlerThread("CameraPreview");
             thread.start();
-            mPreviewSession.setRepeatingRequest(mPreviewBuilder.build(), null, mBackgroundHandler);
+
+            CameraCaptureSession.CaptureCallback CaptureCallback
+                    = new CameraCaptureSession.CaptureCallback() {
+
+                @Override
+                public void onCaptureCompleted(@NonNull CameraCaptureSession session,
+                                               @NonNull CaptureRequest request,
+                                               @NonNull TotalCaptureResult result) {
+                    mCaptureResult = result;
+                }
+            };
+
+            mPreviewSession.setRepeatingRequest(mPreviewBuilder.build(), CaptureCallback, mBackgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
     }
 
     private void setUpCaptureRequestBuilder(CaptureRequest.Builder builder) {
-        builder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
+
+        builder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_OFF);
+        builder.set(CaptureRequest.COLOR_CORRECTION_MODE, CameraMetadata.COLOR_CORRECTION_MODE_FAST);
+        builder.set(CaptureRequest.HOT_PIXEL_MODE, CameraMetadata.HOT_PIXEL_MODE_FAST);
+        builder.set(CaptureRequest.SHADING_MODE, CameraMetadata.SHADING_MODE_FAST);
+        builder.set(CaptureRequest.TONEMAP_MODE, CameraMetadata.TONEMAP_MODE_FAST);
+        builder.set(CaptureRequest.CONTROL_SCENE_MODE, CameraMetadata.CONTROL_SCENE_MODE_DISABLED);
+        builder.set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_OFF);
+        builder.set(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_FAST);
+
+        builder.set(CaptureRequest.SENSOR_SENSITIVITY, 800);
+        builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME,  (1000000000L/96));
+        mRequestedFrameDuration = (1000000000L/48);
+        builder.set(CaptureRequest.SENSOR_FRAME_DURATION, mRequestedFrameDuration);
+
+        Log.d(TAG, "Requested SENSOR_FRAME_DURATION = " + mRequestedFrameDuration);
+
     }
 
     /**
